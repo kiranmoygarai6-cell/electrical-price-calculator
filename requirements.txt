@@ -1,6 +1,3 @@
-streamlit
-PyMuPDF
-reportlab
 pdfplumber
 reportlab
 streamlit
