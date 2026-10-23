@@ -29,48 +29,54 @@ if uploaded_file is not None:
 
     if st.button("Process PDF & Extract Prices"):
         with st.spinner("পিডিএফ প্রসেস করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন..."):
-            # Open PDF with PyMuPDF
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             extracted_items = []
-
-            # Regex to detect prices (e.g., 150, 1,250.00)
-            price_pattern = re.compile(r'\\b\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?\\b')
-
+            
+            # More flexible regex to detect prices (handles integers, decimals, and commas)
+            price_pattern = re.compile(r'\b\d{2,6}(?:,\d{3})*(?:\.\d{1,2})?\b')
+            
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 text = page.get_text("text")
-                lines = text.split('\\n')
-
+                lines = text.split('\n')
+                
                 for line in lines:
                     line = line.strip()
                     if not line:
                         continue
-
+                    
                     matches = price_pattern.findall(line)
                     if matches:
                         try:
-                            # Taking the last matched number in the line as MRP/Price
+                            # Clean and take the last valid number as price/MRP
                             price_str = matches[-1].replace(',', '')
                             mrp = float(price_str)
-
-                            # Filter out very small numbers (like page numbers or item codes)
-                            if mrp > 10:
+                            
+                            # Filter out small numbers like page numbers or codes (< 20)
+                            if mrp >= 20:
                                 desc = line.replace(matches[-1], '').strip()
-                                if not desc:
-                                    desc = f"Product Item (Page {page_num + 1})"
+                                if not desc or len(desc) < 2:
+                                    desc = f"Electrical Item (Page {page_num + 1})"
                                 extracted_items.append({"desc": desc, "mrp": mrp})
                         except ValueError:
                             continue
 
-            # Store in session state for later use
-            st.session_state['extracted_items'] = extracted_items
-            st.success(f"সফলভাবে {len(extracted_items)}টি আইটেমের প্রাইস ডিটেক্ট করা হয়েছে!")
+            # Remove exact duplicates if any
+            unique_items = []
+            seen = set()
+            for item in extracted_items:
+                identifier = (item['desc'], item['mrp'])
+                if identifier not in seen:
+                    seen.add(identifier)
+                    unique_items.append(item)
+
+            st.session_state['extracted_items'] = unique_items
+            st.success(f"সফলভাবে {len(unique_items)}টি আইটেমের প্রাইস ডিটেক্ট করা হয়েছে!")
 
     # If items are extracted, show preview and download option
     if 'extracted_items' in st.session_state and st.session_state['extracted_items']:
         items = st.session_state['extracted_items']
-
-        # Multi-tier discount calculation formula
+        
         def calculate_net(mrp):
             net = mrp
             if d1 > 0:
@@ -83,12 +89,12 @@ if uploaded_file is not None:
 
         preview_data = []
         table_data = [["Product Description", "MRP (₹)", "Net Discounted Price (₹)"]]
-
+        
         for item in items:
             net_price = calculate_net(item['mrp'])
             preview_data.append({
-                "Description": item['desc'],
-                "MRP (₹)": item['mrp'],
+                "Description": item['desc'], 
+                "MRP (₹)": item['mrp'], 
                 "Net Price (₹)": net_price
             })
             table_data.append([item['desc'], f"₹{item['mrp']:.2f}", f"₹{net_price:.2f}"])
@@ -101,7 +107,7 @@ if uploaded_file is not None:
             buffer = io.BytesIO()
             pdf_doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
             elements = []
-
+            
             styles = getSampleStyleSheet()
             title_style = ParagraphStyle(
                 'TitleStyle',
@@ -110,12 +116,11 @@ if uploaded_file is not None:
                 alignment=1,
                 spaceAfter=15
             )
-
+            
             elements.append(Paragraph("<b>Revised Price List - Discounted Version</b>", title_style))
             elements.append(Paragraph(f"Applied Discounts -> D1: {d1}% | D2: {d2}% | D3: {d3}%", styles['Normal']))
             elements.append(Spacer(1, 10))
-
-            # Create Table for ReportLab PDF
+            
             t = Table(table_data, colWidths=[260, 110, 110])
             t.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0284c7")),
@@ -126,13 +131,13 @@ if uploaded_file is not None:
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
             ]))
-
+            
             elements.append(t)
             pdf_doc.build(elements)
-
+            
             pdf_data = buffer.getvalue()
             buffer.close()
-
+            
             st.download_button(
                 label="📥 Download Modified Price List PDF",
                 data=pdf_data,
