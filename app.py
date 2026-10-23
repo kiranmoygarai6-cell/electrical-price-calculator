@@ -1,146 +1,154 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import re
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 import io
 
 # Page Configuration
-st.set_page_config(page_title="Price List Discount Calculator", layout="wide")
+st.set_page_config(page_title="Garai Electrical Price Chart Generator", layout="wide")
 
-st.title("⚡ Electrical Price List Discount & PDF Modifier")
-st.write("উচ্চ সাইজের পিডিএফ প্রাইস লিস্ট আপলোড করুন এবং সিক্যুয়েন্শাল ডিসকাউন্ট প্রয়োগ করে নতুন পিডিএফ জেনারেট করুন।")
+st.title("⚡ Garai Electrical - Multi-Tier Discount Chart Generator")
+st.write("আপনার প্রফেশনাল প্রাইস লিস্ট এবং মাল্টি-টিয়ার ডিসকাউন্ট চার্ট তৈরি করুন।")
 
-# Sidebar - Multi-tier Discount Inputs
-st.sidebar.header("Discount Settings (%)")
-d1 = st.sidebar.number_input("Discount 1 (%)", min_value=0.0, max_value=100.0, value=10.0, step=0.5)
-d2 = st.sidebar.number_input("Discount 2 (%)", min_value=0.0, max_value=100.0, value=5.0, step=0.5)
-d3 = st.sidebar.number_input("Discount 3 (%) [Optional]", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+# Header & Product Inputs
+col1, col2 = st.columns(2)
+with col1:
+    company_title = st.text_input("Company / Header Name", value="GARAI ELECTRICAL")
+with col2:
+    product_name = st.text_input("Product Line Name", value="POLYCAB GREEN WIRE+")
 
-# File Uploader (Supports up to 10MB or more)
-uploaded_file = st.file_uploader("Upload Price List PDF (Max 10MB+)", type=["pdf"])
+# Sidebar - Discount Tiers Setup
+st.sidebar.header("Discount Tiers Setup (%)")
+discount_input = st.sidebar.text_input("Enter discounts separated by comma", value="34, 34.5, 35, 35.5, 36, 36.5, 37")
+
+# File Uploader
+uploaded_file = st.file_uploader("Upload Price List PDF", type=["pdf"])
 
 if uploaded_file is not None:
     pdf_bytes = uploaded_file.read()
     file_size_mb = len(pdf_bytes) / (1024 * 1024)
     st.info(f"Uploaded File Size: {file_size_mb:.2f} MB")
 
-    if st.button("Process PDF & Extract Prices"):
-        with st.spinner("পিডিএফ প্রসেস করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন..."):
+    if st.button("Process & Generate Chart Table"):
+        with st.spinner("পিডিএফ থেকে সাইজ এবং এমআরপি এক্সট্রাক্ট করা হচ্ছে..."):
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             extracted_items = []
-            
-            # More flexible regex to detect prices (handles integers, decimals, and commas)
-            price_pattern = re.compile(r'\b\d{2,6}(?:,\d{3})*(?:\.\d{1,2})?\b')
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 text = page.get_text("text")
                 lines = text.split('\n')
                 
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    matches = price_pattern.findall(line)
-                    if matches:
-                        try:
-                            # Clean and take the last valid number as price/MRP
-                            price_str = matches[-1].replace(',', '')
-                            mrp = float(price_str)
-                            
-                            # Filter out small numbers like page numbers or codes (< 20)
-                            if mrp >= 20:
-                                desc = line.replace(matches[-1], '').strip()
-                                if not desc or len(desc) < 2:
-                                    desc = f"Electrical Item (Page {page_num + 1})"
-                                extracted_items.append({"desc": desc, "mrp": mrp})
-                        except ValueError:
-                            continue
+                for i in range(len(lines)):
+                    line = lines[i].strip()
+                    # Match standard wire sizes (0.75, 1, 1.5, 2.5, 4, 6, etc.)
+                    if re.match(r'^(0\.75|1(\.0)?|1\.5|2\.5|4|6|10|16|25|35|50)$', line):
+                        size_val = line
+                        # Look for the MRP in nearby lines
+                        for j in range(i+1, min(i+5, len(lines))):
+                            potential_price = lines[j].replace(',', '').strip()
+                            if re.match(r'^\d{3,6}(\.\d{2})?$', potential_price):
+                                mrp_val = float(potential_price)
+                                if mrp_val > 50:
+                                    extracted_items.append({"size": size_val, "mrp": mrp_val})
+                                    break
 
-            # Remove exact duplicates if any
+            # Remove duplicates based on size
             unique_items = []
-            seen = set()
+            seen_sizes = set()
             for item in extracted_items:
-                identifier = (item['desc'], item['mrp'])
-                if identifier not in seen:
-                    seen.add(identifier)
+                if item['size'] not in seen_sizes:
+                    seen_sizes.add(item['size'])
                     unique_items.append(item)
+            
+            st.session_state['chart_items'] = unique_items
+            st.success(f"সফলভাবে {len(unique_items)}টি সাইজ ও প্রাইস ডিটেক্ট করা হয়েছে!")
 
-            st.session_state['extracted_items'] = unique_items
-            st.success(f"সফলভাবে {len(unique_items)}টি আইটেমের প্রাইস ডিটেক্ট করা হয়েছে!")
-
-    # If items are extracted, show preview and download option
-    if 'extracted_items' in st.session_state and st.session_state['extracted_items']:
-        items = st.session_state['extracted_items']
+    # If items are extracted, show multi-tier discount chart preview
+    if 'chart_items' in st.session_state and st.session_state['chart_items']:
+        items = st.session_state['chart_items']
         
-        def calculate_net(mrp):
-            net = mrp
-            if d1 > 0:
-                net *= (1 - d1 / 100.0)
-            if d2 > 0:
-                net *= (1 - d2 / 100.0)
-            if d3 > 0:
-                net *= (1 - d3 / 100.0)
-            return round(net, 2)
+        try:
+            discounts = [float(d.strip()) for d in discount_input.split(',')]
+        except:
+            discounts = [34.0, 35.0, 36.0]
 
-        preview_data = []
-        table_data = [["Product Description", "MRP (₹)", "Net Discounted Price (₹)"]]
-        
+        table_headers = ["SIZE (SQ.MM.)", "MRP (₹)"] + [f"LESS {d}%\nNET RATE (₹)" for d in discounts]
+        table_data = [table_headers]
+
+        preview_rows = []
         for item in items:
-            net_price = calculate_net(item['mrp'])
-            preview_data.append({
-                "Description": item['desc'], 
-                "MRP (₹)": item['mrp'], 
-                "Net Price (₹)": net_price
-            })
-            table_data.append([item['desc'], f"₹{item['mrp']:.2f}", f"₹{net_price:.2f}"])
+            row = [item['size'], f"₹{item['mrp']:.2f}"]
+            preview_row = {"Size (Sq. Mm.)": item['size'], "MRP (₹)": item['mrp']}
+            for d in discounts:
+                net = round(item['mrp'] * (1 - d / 100.0), 2)
+                row.append(f"₹{net:.2f}")
+                preview_row[f"Less {d}%"] = net
+            table_data.append(row)
+            preview_rows.append(preview_row)
 
-        st.subheader("প্রাইস প্রিভিউ এবং ক্যালকুলেশন টেবিল")
-        st.dataframe(preview_data, use_container_width=True)
+        st.subheader("📊 মাল্টি-টিয়ার ডিসকাউন্ট প্রাইস চার্ট প্রিভিউ")
+        st.dataframe(preview_rows, use_container_width=True)
 
-        # Generate Modified PDF Button
-        if st.button("Generate Revised PDF Price List"):
+        # Generate Professional PDF Chart Button
+        if st.button("Generate Professional PDF Chart"):
             buffer = io.BytesIO()
-            pdf_doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            # Landscape layout for wide discount charts
+            pdf_doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
             elements = []
             
-            styles = getSampleStyleSheet()
-            title_style = ParagraphStyle(
-                'TitleStyle',
-                parent=styles['Heading1'],
-                fontSize=14,
-                alignment=1,
-                spaceAfter=15
-            )
+            # Header Box (Garai Electrical Style)
+            header_data = [[
+                Paragraph(f"<b>{company_title}</b>", ParagraphStyle('H1', textColor=colors.whitesmoke, fontSize=16, fontName='Helvetica-Bold')),
+                Paragraph(f"<b>{product_name}</b>", ParagraphStyle('H2', textColor=colors.whitesmoke, fontSize=14, fontName='Helvetica-Bold', alignment=2))
+            ]]
+            header_table = Table(header_data, colWidths=[380, 380])
+            header_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#1e293b")),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+                ('LEFTPADDING', (0,0), (-1,-1), 15),
+                ('RIGHTPADDING', (0,0), (-1,-1), 15),
+            ]))
+            elements.append(header_table)
+            elements.append(Spacer(1, 15))
             
-            elements.append(Paragraph("<b>Revised Price List - Discounted Version</b>", title_style))
-            elements.append(Paragraph(f"Applied Discounts -> D1: {d1}% | D2: {d2}% | D3: {d3}%", styles['Normal']))
+            # Subtitle
+            elements.append(Paragraph("<b>MRP / LIST PRICE DISCOUNT CHART - 90 METER BOX</b>", ParagraphStyle('Sub', fontSize=12, fontName='Helvetica-Bold', textColor=colors.HexColor("#334155"))))
             elements.append(Spacer(1, 10))
             
-            t = Table(table_data, colWidths=[260, 110, 110])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0284c7")),
+            # Dynamic Column Widths Calculation
+            num_cols = len(table_headers)
+            col_w = [90, 80] + [560 / (num_cols - 2)] * (num_cols - 2)
+            
+            chart_table = Table(table_data, colWidths=col_w)
+            chart_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#16a34a")), # Professional Green Header
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
             ]))
             
-            elements.append(t)
+            elements.append(chart_table)
             pdf_doc.build(elements)
             
             pdf_data = buffer.getvalue()
             buffer.close()
             
             st.download_button(
-                label="📥 Download Modified Price List PDF",
+                label="📥 Download Professional Price Chart PDF",
                 data=pdf_data,
-                file_name="Modified_Price_List.pdf",
+                file_name="Garai_Electrical_Price_Chart.pdf",
                 mime="application/pdf"
             )
